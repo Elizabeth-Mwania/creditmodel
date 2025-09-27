@@ -1,6 +1,8 @@
-/00.data
-/01.data_processing
-/02.eda
-/03.binning_process
-/04.model_fitting
-/05.model_evaluation
+/00.data/outputs
+/00.data/raw-data.csv
+/01.data_processing/outputs
+/02.eda/outputs
+/03.binning_process/outputs
+/04.model_fitting/outputs
+/05.model_evaluation/outputs
+/initial
