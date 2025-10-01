@@ -23,9 +23,12 @@ try:
         PERFORMANCE_THRESHOLDS,
         CREDIT_SCORING_METRICS
     )
+    # Import scorecard utilities
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..', '03.binning_process'))
+    from scorecard_utils import CreditScorecard
     IMPORTS_AVAILABLE = True
     print("Model evaluation modules imported successfully!")
-    
+
 except ImportError as e:
     print(f"Model evaluation modules not found: {e}")
     IMPORTS_AVAILABLE = False
@@ -166,41 +169,41 @@ def create_business_scorecard_analysis(best_model, X_test, y_test, scaler=None, 
             X_test_scaled = scaler.transform(X_test)
         else:
             X_test_scaled = X_test
-        
+
         # Generate predictions
         y_prob = best_model.predict_proba(X_test_scaled)[:, 1] if hasattr(best_model, 'predict_proba') else best_model.predict(X_test_scaled)
-        
+
         # Create score bands
         score_bands = pd.cut(y_prob, bins=10, labels=[f'Band_{i+1}' for i in range(10)])
-        
+
         # Create scorecard analysis
         scorecard_analysis = pd.DataFrame({
             'True_Label': y_test,
             'Probability': y_prob,
             'Score_Band': score_bands
         })
-        
+
         # Calculate band statistics
         band_stats = scorecard_analysis.groupby('Score_Band').agg({
             'True_Label': ['count', 'sum', 'mean'],
             'Probability': ['mean', 'min', 'max']
         }).round(4)
-        
+
         band_stats.columns = ['Count', 'Bad_Count', 'Bad_Rate', 'Avg_Probability', 'Min_Probability', 'Max_Probability']
         band_stats['Good_Count'] = band_stats['Count'] - band_stats['Bad_Count']
         band_stats['Good_Rate'] = 1 - band_stats['Bad_Rate']
-        
+
         # Reorder columns
         band_stats = band_stats[['Count', 'Good_Count', 'Bad_Count', 'Good_Rate', 'Bad_Rate', 'Avg_Probability', 'Min_Probability', 'Max_Probability']]
-        
+
         if output_folder:
             # Save scorecard analysis
             scorecard_path = os.path.join(output_folder, "scorecard_analysis.csv")
             band_stats.to_csv(scorecard_path)
-            
+
             # Create visualization
             fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-            
+
             # Bad rate by score band
             axes[0, 0].bar(range(len(band_stats)), band_stats['Bad_Rate'], alpha=0.7, color='red')
             axes[0, 0].set_title('Bad Rate by Score Band')
@@ -209,7 +212,7 @@ def create_business_scorecard_analysis(best_model, X_test, y_test, scaler=None, 
             axes[0, 0].set_xticks(range(len(band_stats)))
             axes[0, 0].set_xticklabels(band_stats.index, rotation=45)
             axes[0, 0].grid(True, alpha=0.3)
-            
+
             # Count distribution
             axes[0, 1].bar(range(len(band_stats)), band_stats['Count'], alpha=0.7, color='blue')
             axes[0, 1].set_title('Count Distribution by Score Band')
@@ -218,11 +221,11 @@ def create_business_scorecard_analysis(best_model, X_test, y_test, scaler=None, 
             axes[0, 1].set_xticks(range(len(band_stats)))
             axes[0, 1].set_xticklabels(band_stats.index, rotation=45)
             axes[0, 1].grid(True, alpha=0.3)
-            
+
             # Score distribution by outcome
             good_scores = y_prob[y_test == 0]
             bad_scores = y_prob[y_test == 1]
-            
+
             axes[1, 0].hist(good_scores, bins=30, alpha=0.7, label='Good', color='green', density=True)
             axes[1, 0].hist(bad_scores, bins=30, alpha=0.7, label='Bad', color='red', density=True)
             axes[1, 0].set_title('Score Distribution by Outcome')
@@ -230,30 +233,179 @@ def create_business_scorecard_analysis(best_model, X_test, y_test, scaler=None, 
             axes[1, 0].set_ylabel('Density')
             axes[1, 0].legend()
             axes[1, 0].grid(True, alpha=0.3)
-            
+
             # Cumulative bad rate
             sorted_probs = np.sort(y_prob)[::-1]  # Sort descending
             sorted_labels = y_test[np.argsort(y_prob)[::-1]]
             cumulative_bad_rate = np.cumsum(sorted_labels) / np.arange(1, len(sorted_labels) + 1)
-            
+
             axes[1, 1].plot(range(len(cumulative_bad_rate)), cumulative_bad_rate, color='purple')
             axes[1, 1].set_title('Cumulative Bad Rate (Ordered by Score)')
             axes[1, 1].set_xlabel('Observations (Ordered by Risk Score)')
             axes[1, 1].set_ylabel('Cumulative Bad Rate')
             axes[1, 1].grid(True, alpha=0.3)
-            
+
             plt.tight_layout()
             scorecard_plot_path = os.path.join(output_folder, "scorecard_business_analysis.png")
             plt.savefig(scorecard_plot_path, dpi=300, bbox_inches='tight')
             plt.close()
-            
+
             logger.info("Business scorecard analysis completed")
-        
+
         return band_stats
-        
+
     except Exception as e:
         logger.error(f"Error creating business scorecard analysis: {e}")
         raise
+
+def evaluate_scorecard_performance(output_folder, available_features):
+    """Evaluate the scorecard performance if scorecard was created"""
+    try:
+        scorecard_dir = os.path.join(output_folder, "..", "04.model_fitting", "outputs", "scorecard")
+
+        if not os.path.exists(scorecard_dir):
+            logger.info("No scorecard directory found - scorecard evaluation skipped")
+            return None
+
+        # Load scorecard if it exists
+        scorecard_files = [f for f in os.listdir(scorecard_dir) if f.endswith('.pkl')]
+        if not scorecard_files:
+            logger.info("No scorecard model file found")
+            return None
+
+        scorecard_path = os.path.join(scorecard_dir, scorecard_files[0])
+        scorecard = joblib.load(scorecard_path)
+
+        # Load test data for scorecard evaluation
+        test_data_path = os.path.join(output_folder, "..", "03.binning_process", "outputs", "03.test_data.csv")
+        if not os.path.exists(test_data_path):
+            logger.warning("Test data not found for scorecard evaluation")
+            return None
+
+        test_df = pd.read_csv(test_data_path)
+        y_test = test_df['TARGET'].values
+
+        # Prepare features for scorecard
+        available_test_features = [f for f in available_features if f in test_df.columns]
+        X_test_df = test_df[available_test_features]
+
+        # Calculate scorecard scores
+        scores = scorecard.calculate_score(X_test_df, available_test_features)
+
+        # Evaluate scorecard performance
+        from sklearn.metrics import roc_auc_score, classification_report
+
+        # Calculate basic metrics
+        auc_score = roc_auc_score(y_test, scores)
+        gini = 2 * auc_score - 1
+
+        # Create score bands for scorecard analysis
+        score_bands = pd.cut(scores, bins=10, labels=[f'Band_{i+1}' for i in range(10)])
+
+        scorecard_analysis = pd.DataFrame({
+            'True_Label': y_test,
+            'Score': scores,
+            'Score_Band': score_bands
+        })
+
+        # Calculate band statistics
+        band_stats = scorecard_analysis.groupby('Score_Band').agg({
+            'True_Label': ['count', 'sum', 'mean'],
+            'Score': ['mean', 'min', 'max']
+        }).round(4)
+
+        band_stats.columns = ['Count', 'Bad_Count', 'Bad_Rate', 'Avg_Score', 'Min_Score', 'Max_Score']
+        band_stats['Good_Count'] = band_stats['Count'] - band_stats['Bad_Count']
+        band_stats['Good_Rate'] = 1 - band_stats['Bad_Rate']
+
+        # Create scorecard evaluation report
+        scorecard_eval_path = os.path.join(output_folder, "scorecard_evaluation_report.txt")
+        with open(scorecard_eval_path, 'w') as f:
+            f.write("SCORECARD PERFORMANCE EVALUATION\n")
+            f.write("=" * 50 + "\n\n")
+            f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+
+            f.write("SCORECARD METRICS:\n")
+            f.write("-" * 30 + "\n")
+            f.write(f"AUC Score: {auc_score:.4f}\n")
+            f.write(f"Gini Coefficient: {gini:.4f}\n")
+            f.write(f"Score Range: {scores.min():.1f} - {scores.max():.1f}\n")
+            f.write(f"Mean Score: {scores.mean():.1f}\n\n")
+
+            f.write("SCORE BANDS ANALYSIS:\n")
+            f.write("-" * 30 + "\n")
+            f.write(band_stats.to_string())
+            f.write("\n\n")
+
+            f.write("SCORECARD TABLE:\n")
+            f.write("-" * 30 + "\n")
+            for feature, points in scorecard.scorecard_table.items():
+                if feature != 'base_points':
+                    f.write(f"{feature}:\n")
+                    if isinstance(points, dict):
+                        for bin_name, point_value in points.items():
+                            f.write(f"  {bin_name}: {point_value} points\n")
+                    f.write("\n")
+
+        # Create scorecard visualization
+        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+
+        # Score distribution by outcome
+        good_scores = scores[y_test == 0]
+        bad_scores = scores[y_test == 1]
+
+        axes[0, 0].hist(good_scores, bins=30, alpha=0.7, label='Good', color='green', density=True)
+        axes[0, 0].hist(bad_scores, bins=30, alpha=0.7, label='Bad', color='red', density=True)
+        axes[0, 0].set_title('Scorecard Score Distribution by Outcome')
+        axes[0, 0].set_xlabel('Score')
+        axes[0, 0].set_ylabel('Density')
+        axes[0, 0].legend()
+        axes[0, 0].grid(True, alpha=0.3)
+
+        # Bad rate by score band
+        axes[0, 1].bar(range(len(band_stats)), band_stats['Bad_Rate'], alpha=0.7, color='red')
+        axes[0, 1].set_title('Bad Rate by Score Band')
+        axes[0, 1].set_xlabel('Score Band')
+        axes[0, 1].set_ylabel('Bad Rate')
+        axes[0, 1].set_xticks(range(len(band_stats)))
+        axes[0, 1].set_xticklabels(band_stats.index, rotation=45)
+        axes[0, 1].grid(True, alpha=0.3)
+
+        # Score vs Probability correlation (if available)
+        axes[1, 0].scatter(scores, scores, alpha=0.5, color='blue')  # Placeholder
+        axes[1, 0].set_title('Score Distribution')
+        axes[1, 0].set_xlabel('Score')
+        axes[1, 0].set_ylabel('Frequency')
+        axes[1, 0].grid(True, alpha=0.3)
+
+        # Cumulative bad rate by score
+        sorted_scores = np.sort(scores)[::-1]  # Sort descending (higher scores = lower risk)
+        sorted_labels = y_test[np.argsort(scores)[::-1]]
+        cumulative_bad_rate = np.cumsum(sorted_labels) / np.arange(1, len(sorted_labels) + 1)
+
+        axes[1, 1].plot(range(len(cumulative_bad_rate)), cumulative_bad_rate, color='purple')
+        axes[1, 1].set_title('Cumulative Bad Rate (Ordered by Score)')
+        axes[1, 1].set_xlabel('Observations (Ordered by Score)')
+        axes[1, 1].set_ylabel('Cumulative Bad Rate')
+        axes[1, 1].grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        scorecard_eval_plot_path = os.path.join(output_folder, "scorecard_evaluation.png")
+        plt.savefig(scorecard_eval_plot_path, dpi=300, bbox_inches='tight')
+        plt.close()
+
+        logger.info("Scorecard evaluation completed")
+
+        return {
+            'auc_score': auc_score,
+            'gini': gini,
+            'band_stats': band_stats,
+            'scores': scores
+        }
+
+    except Exception as e:
+        logger.error(f"Error evaluating scorecard: {e}")
+        return None
 
 def create_model_performance_summary(evaluation_results, output_folder):
     """Create a comprehensive performance summary report"""
@@ -476,6 +628,24 @@ def main():
             print("BUSINESS SCORECARD ANALYSIS")
             print("="*60)
             print(scorecard_stats.to_string())
+
+        # Scorecard evaluation
+        logger.info("="*50)
+        logger.info("STEP 5.5: SCORECARD PERFORMANCE EVALUATION")
+        logger.info("="*50)
+        
+        scorecard_results = evaluate_scorecard_performance(output_folder, available_features)
+        
+        if scorecard_results:
+            print("\n" + "="*60)
+            print("SCORECARD PERFORMANCE RESULTS")
+            print("="*60)
+            print(f"AUC Score: {scorecard_results['auc_score']:.4f}")
+            print(f"Gini Coefficient: {scorecard_results['gini']:.4f}")
+            print("\nScore Band Statistics:")
+            print(scorecard_results['band_stats'].to_string())
+        else:
+            print("No scorecard evaluation performed.")
         
         # Create comprehensive reports
         logger.info("="*50)

@@ -1,0 +1,64 @@
+CREDIT SCORING MODEL EVALUATION REPORT
+============================================================
+
+Generated on: 2025-09-27 15:13:43
+
+OVERALL PERFORMANCE SUMMARY:
+----------------------------------------
+Best Performing Model: random_forest
+ROC AUC Score: 0.7234
+Gini Coefficient: 0.4468
+KS Statistic: 0.3696
+Precision: 0.4468
+Recall: 0.4565
+F1 Score: 0.4516
+
+PERFORMANCE ASSESSMENT:
+----------------------------------------
+Overall Grade: ACCEPTABLE
+Recommendation: Consider deployment with monitoring - Acceptable performance
+
+INDIVIDUAL MODEL PERFORMANCE:
+----------------------------------------
+
+5. random_forest:
+   ROC AUC: 0.7234
+   Gini: 0.4468
+   KS Statistic: 0.3696
+   Precision: 0.4468
+   Recall: 0.4565
+
+1. best:
+   ROC AUC: 0.7190
+   Gini: 0.4379
+   KS Statistic: 0.3430
+   Precision: 0.4651
+   Recall: 0.4348
+
+3. gradient_boosting:
+   ROC AUC: 0.7190
+   Gini: 0.4379
+   KS Statistic: 0.3430
+   Precision: 0.4651
+   Recall: 0.4348
+
+4. logistic_regression:
+   ROC AUC: 0.7016
+   Gini: 0.4033
+   KS Statistic: 0.3430
+   Precision: 0.3256
+   Recall: 0.6087
+
+2. decision_tree:
+   ROC AUC: 0.6487
+   Gini: 0.2973
+   KS Statistic: 0.2536
+   Precision: 0.3462
+   Recall: 0.3913
+
+BUSINESS IMPLICATIONS:
+----------------------------------------
+- Model Interpretability: Medium to Low
+- Deployment Complexity: Medium to High
+- Expected Performance: Acceptable discriminatory power
+- Risk Assessment: Medium to high risk deployment

@@ -22,9 +22,12 @@ try:
         OUTPUT_CONFIG,
         PERFORMANCE_THRESHOLDS
     )
+    # Import scorecard utilities
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..', '03.binning_process'))
+    from scorecard_utils import CreditScorecard, generate_scorecard_report
     IMPORTS_AVAILABLE = True
     print("All model fitting modules imported successfully!")
-    
+
 except ImportError as e:
     print(f"Model fitting modules not found: {e}")
     IMPORTS_AVAILABLE = False
@@ -379,7 +382,65 @@ def main():
         print("MODEL EVALUATION RESULTS")
         print("="*80)
         print(evaluation_results.to_string(index=False))
-        
+
+        # Create scorecard if logistic regression was trained
+        scorecard_results = None
+        if 'logistic_regression' in model_engine.models:
+            logger.info("="*50)
+            logger.info("STEP 5.5: CREATING SCORECARD")
+            logger.info("="*50)
+
+            try:
+                # Create scorecard using the trained logistic regression
+                lr_model = model_engine.models['logistic_regression']
+
+                # Create scorecard with simplified WoE mappings
+                scorecard = CreditScorecard(base_score=600, pdo=20, odds=20)
+
+                # Calculate points manually using coefficients
+                coef = lr_model.coef_[0]
+                intercept = lr_model.intercept_[0]
+
+                factor = 20 / np.log(2)  # PDO = 20
+                offset = 600 - factor * np.log(20)  # Base score 600, odds 20:1
+
+                scorecard_table = {'base_points': round(offset + factor * intercept)}
+
+                for i, feature in enumerate(final_features):
+                    # Simplified: assume 3 bins per feature with WoE -0.5, 0, 0.5
+                    feature_coef = coef[i]
+                    scorecard_table[feature] = {
+                        'Low': round(factor * (feature_coef * -0.5)),
+                        'Medium': round(factor * (feature_coef * 0.0)),
+                        'High': round(factor * (feature_coef * 0.5))
+                    }
+
+                scorecard.scorecard_table = scorecard_table
+                scorecard.is_fitted = True
+
+                # Calculate scores for test data
+                test_df_features = pd.DataFrame(X_test, columns=final_features)
+                scores = scorecard.calculate_score(test_df_features, final_features)
+
+                # Generate scorecard report
+                scorecard_output_dir = os.path.join(output_folder, "scorecard")
+                generate_scorecard_report(scorecard, scores, y_test, scorecard_output_dir)
+
+                scorecard_results = {
+                    'scorecard': scorecard,
+                    'scores': scores,
+                    'scorecard_dir': scorecard_output_dir
+                }
+
+                logger.info("Scorecard created successfully")
+                print("\n" + "="*60)
+                print("SCORECARD CREATED")
+                print("="*60)
+                print(f"Scorecard saved to: {scorecard_output_dir}")
+
+            except Exception as e:
+                logger.error(f"Error creating scorecard: {e}")
+
         # Save models and results
         logger.info("="*50)
         logger.info("STEP 6: SAVING MODELS AND RESULTS")
